@@ -8,7 +8,7 @@ use std::{
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    sender: Sender<Task>,
+    sender: Option<Sender<Task>>,
 }
 
 impl ThreadPool {
@@ -28,18 +28,36 @@ impl ThreadPool {
         for id in 0..size {
             workers.push(Worker::new(id, Arc::clone(&arc_reciever)));
         }
-        ThreadPool { workers, sender }
+        ThreadPool {
+            workers,
+            sender: Some(sender),
+        }
     }
 
     pub fn execute<F>(&self, f: F)
     where
         F: FnOnce() + Send + 'static,
     {
-        self.sender.send(Task::new(f)).unwrap();
+        match self.sender.as_ref() {
+            Some(sender) => {
+                sender.send(Task::new(f)).unwrap();
+            }
+            _ => unreachable!("Task Sender is empty"),
+        }
+    }
+}
+
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        drop(self.sender.take());
+        for worker in self.workers.drain(..) {
+            worker.thread.join().unwrap();
+        }
     }
 }
 
 struct Worker {
+    #[allow(dead_code)]
     id: usize,
     thread: JoinHandle<()>,
 }
