@@ -1,10 +1,6 @@
-use std::{
-    sync::{
-        Arc, Mutex,
-        mpsc::{self, Receiver, Sender},
-    },
-    thread::{self, JoinHandle},
-};
+use std::thread::{self, JoinHandle};
+
+use crossbeam_channel::{Receiver, Sender};
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
@@ -20,14 +16,13 @@ impl ThreadPool {
     /// The `new` function will panic if the size is zero.  
     pub fn new(size: usize) -> Self {
         assert!(size > 0);
+        let (sender, receiver) = crossbeam_channel::unbounded();
 
-        let (sender, reciever) = mpsc::channel();
-
-        let arc_reciever = Arc::new(Mutex::new(reciever));
         let mut workers = Vec::with_capacity(size);
         for id in 0..size {
-            workers.push(Worker::new(id, Arc::clone(&arc_reciever)));
+            workers.push(Worker::new(id, receiver.clone()));
         }
+
         ThreadPool {
             workers,
             sender: Some(sender),
@@ -63,25 +58,10 @@ struct Worker {
 }
 
 impl Worker {
-    fn new(id: usize, reciever: Arc<Mutex<Receiver<Task>>>) -> Self {
+    fn new(id: usize, receiver: Receiver<Task>) -> Self {
         let thread = thread::spawn(move || {
-            loop {
-                let task = {
-                    let lock = reciever.lock().unwrap();
-                    println!("Worker {id} wating task");
-                    lock.recv()
-                };
-                println!("Worker {id} got a task");
-                match task {
-                    Ok(task) => {
-                        task.0();
-                        println!("Worker {id} done a task");
-                    }
-                    Err(e) => {
-                        println!("{e:?}");
-                        break;
-                    }
-                }
+            while let Ok(task) = receiver.recv() {
+                task.0();
             }
         });
         Worker { id, thread }
